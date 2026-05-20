@@ -4,8 +4,8 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 
 # 網頁基礎設定
-st.set_page_config(page_title="Seeds Hope 庫存管理", page_icon="💐", layout="centered")
-st.title("💐 Seeds Hope 庫存即時管理系統")
+st.set_page_config(page_title="Seeds Hope 多品類庫存管理", page_icon="💐", layout="centered")
+st.title("💐 Seeds Hope 多品類庫存即時管理系統")
 
 # 1. 初始化 Google Sheets 連線
 @st.cache_resource
@@ -14,7 +14,6 @@ def get_gspread_client():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # 從 Streamlit Secrets 中讀取 GCP 憑證資訊
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
@@ -28,233 +27,183 @@ except Exception as e:
 
 # 讀取最新庫存資料
 def load_data():
-    # 確保試算表欄位結構正確 [花束款式, 現有庫存, 累積銷售量]
     try:
         data = worksheet.get_all_records()
         return pd.DataFrame(data)
-    except gspread.exceptions.GSpreadException as e:
-        st.error(f"❌ 讀取資料表結構錯誤，請確認工作表名稱為『Stock』且欄位標題正確。錯誤回報: {e}")
+    except Exception as e:
+        st.error(f"❌ 讀取資料表結構錯誤，請確認欄位標題是否正確。錯誤回報: {e}")
         st.stop()
 
 df = load_data()
 
-# ---------------------------------------------------------
-# 【極致視覺優化關鍵步驟】注入自定義 CSS 樣式
-# 從 dark theme 切換到乾燥花氛圍的柔和米白色調，並優化手機卡片佈局
-# ---------------------------------------------------------
+# ─── 注入自定義 CSS 樣式（適應手機佈局與溫馨色調） ───
 ST_CSS_STYLE = """
 <style>
-/* 隱藏預設 metric 標籤，我們手動做漂亮的 */
 [data-testid="stMetricLabel"] { display: none; }
-
-/* 定義卡片容器，啟用 Flexbox 讓卡片在手機上自動換行/縱向排列 */
-.stock-cards-container {
-    display: flex;
-    flex-wrap: wrap; 
-    gap: 15px; /* 卡片間距 */
-    justify-content: center;
-    padding: 10px 0;
-}
-
-/* 基礎卡片樣式：米白色背景、香檳金邊框、圓角、微妙陰影 */
-.stock-card {
-    background-color: #fdfaf5; /* 柔軟米白色 */
-    border: 1px solid #e0e0e0;
-    border-radius: 12px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.05); /* 微妙陰影 */
-    width: calc(100% - 20px); /* 手機上幾乎滿寬，留邊距 */
-    max-width: 400px; /* 電腦上不要太大 */
-    padding: 15px;
-    transition: all 0.3s ease;
-}
-
-/* 電腦版螢幕 (寬於 768px) 排版優化：每行兩卡 */
-@media (min-width: 768px) {
-    .stock-card {
-        width: calc(50% - 15px); 
-    }
-}
-
-/* 卡片頭部：款式名稱 */
-.card-header {
-    font-size: 18px;
-    font-weight: bold;
-    color: #5d4037; /* 深棕色文字，溫柔且醒目 */
-    margin-bottom: 12px;
-    text-align: center;
-}
-
-/* 卡片主體：資訊排版 */
-.card-body {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-/* 資訊區塊通用樣式 */
-.info-block {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 16px;
-}
-
-/* 圖示 */
-.icon {
-    font-size: 20px;
-}
-
-/* 標籤文字 */
-.label {
-    color: #8d6e63; /* 灰棕色標籤文字 */
-    width: 80px;
-}
-
-/* 數據數值 */
-.value {
-    font-size: 24px;
-    font-weight: bold;
-}
-
-/* --- 不同欄位數值的顏色暗示 --- */
-.stock-block .value { color: #388e3c; } /* 充足庫存使用綠色 */
-.sales-block .value { color: #e65100; } /* 累積銷售使用橙色 */
-
-/* 狀態標籤（庫存狀態） */
-.status-msg {
-    margin-left: auto; /* 推到最右邊 */
-    font-size: 14px;
-    color: #4caf50;
-    padding: 2px 8px;
-    border-radius: 4px;
-    background-color: #e8f5e9;
-}
-
-/* ⚠️ 低庫存特別樣式（醒目突顯） ⚠️ */
-.stock-card.low-stock {
-    background-color: #fffde7; /* 淡黃色背景警告 */
-    border-color: #fff176;
-    border-width: 2px;
-    box-shadow: 0 4px 8px rgba(255, 235, 59, 0.2);
-}
-
-.stock-card.low-stock .stock-block .value {
-    color: #f57f17; /* 醒目的橙黃色 */
-}
-
-.stock-card.low-stock .status-msg {
-    color: #ff9800;
-    background-color: #fff3e0;
-}
-
-/* 滾動條樣式，讓手機滾動更順手 */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background-color: #e0e0e0; border-radius: 10px; }
-
+.stock-cards-container { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; padding: 10px 0; }
+.stock-card { background-color: #fdfaf5; border: 1px solid #e2d7cd; border-radius: 14px; box-shadow: 0 3px 8px rgba(0,0,0,0.04); width: calc(100% - 20px); max-width: 450px; padding: 18px; }
+@media (min-width: 768px) { .stock-card { width: calc(50% - 15px); } }
+.card-header { font-size: 18px; font-weight: bold; color: #5d4037; margin-bottom: 15px; text-align: center; border-bottom: 1px dashed #e2d7cd; padding-bottom: 8px; }
+.card-body-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; }
+.data-node { display: flex; flex-direction: column; align-items: center; padding: 8px 4px; background-color: #ffffff; border-radius: 8px; border: 1px solid #f5ebe0; }
+.node-icon { font-size: 18px; margin-bottom: 2px; }
+.node-label { font-size: 13px; color: #8d6e63; margin-bottom: 4px; }
+.node-value { font-size: 20px; font-weight: bold; }
+.semi-val { color: #2e7d32; }
+.ready-val { color: #1565c0; }
+.sales-val { color: #e65100; }
+.stock-card.low-stock { background-color: #fffde7; border-color: #ffe082; }
+.stock-card.low-stock .ready-val { color: #d84315; }
 </style>
 """
-# 將自定義 CSS 注入網頁，改變 Streamlit 預設風格
 st.markdown(ST_CSS_STYLE, unsafe_allow_html=True)
 
+# 安全檢查
+required_cols = ["種類", "款式名稱", "半成品庫存", "可出貨庫存", "累積銷售量"]
+if not df.empty and not all(c in df.columns for c in required_cols):
+    st.error("❌ Google 試算表欄位不正確！請確認第一行包含：種類、款式名稱、半成品庫存、可出貨庫存、累積銷售量")
+    st.stop()
+
 # ---------------------------------------------------------
-# 2. 即時庫存與銷售看板展示 (全新 HTML/CSS 卡片)
-st.subheader("📊 當前市集庫存與熱銷狀態")
-if not df.empty:
-    # 確保資料表結構正確
-    if "現有庫存" not in df.columns or "累積銷售量" not in df.columns:
-        st.error("⚠️ 請確認 Google 試算表中是否已包含『現有庫存』與『累積銷售量』的標題欄位！")
-        st.stop()
+# 【核心功能】主動線：切換商品種類
+# ---------------------------------------------------------
+st.subheader("📁 請選擇商品大類")
+# 自動從試算表撈取所有不重複的種類，若為空則預設提供花束
+existing_categories = df["種類"].unique().tolist() if not df.empty else ["花束"]
+if not existing_categories:
+    existing_categories = ["花束"]
 
-    # 建立一個隱形的 container 放入所有卡片
+# 讓太太在手機上一鍵勾選切換
+selected_category = st.radio("當前檢視種類：", existing_categories, horizontal=True)
+
+# 根據勾選的種類，篩選出對應的商品資料
+filtered_df = df[df["種類"] == selected_category] if not df.empty else pd.DataFrame()
+
+# ---------------------------------------------------------
+# 2. 即時看板展示（僅顯示篩選後的種類）
+# ---------------------------------------------------------
+st.subheader(f"📊 【{selected_category}】當前庫存與熱銷狀態")
+if not filtered_df.empty:
     st.markdown('<div class="stock-cards-container">', unsafe_allow_html=True)
-
-    for index, row in df.iterrows():
-        stock_val = int(row["現有庫存"])
-        is_low_stock = stock_val <= 3
+    for index, row in filtered_df.iterrows():
+        semi = int(row["半成品庫存"])
+        ready = int(row["可出貨庫存"])
+        sales = int(row["累積銷售量"])
         
-        # 決定卡片樣式與狀態文字
-        low_stock_class = "low-stock" if is_low_stock else ""
-        status_msg = "⚠️ 補貨警告" if is_low_stock else "✅ 庫存充足"
+        low_stock_class = "low-stock" if ready <= 3 else ""
+        alert_icon = "⚠️ " if ready <= 3 else ""
         
-        # 使用 HTML f-string 動態生成卡片
         card_html = f"""
         <div class="stock-card {low_stock_class}">
-            <div class="card-header">【{row['花束款式']}】</div>
-            <div class="card-body">
-                <div class="info-block stock-block">
-                    <span class="icon">📦</span>
-                    <span class="label">現有庫存</span>
-                    <span class="value">{stock_val}</span>
-                    <span class="status-msg">{status_msg}</span>
+            <div class="card-header">{row['款式名稱']}</div>
+            <div class="card-body-grid">
+                <div class="data-node">
+                    <span class="node-icon">🌿</span>
+                    <span class="node-label">半成品</span>
+                    <span class="node-value semi-val">{semi}</span>
                 </div>
-                <div class="info-block sales-block">
-                    <span class="icon">🔥</span>
-                    <span class="label">累積銷售</span>
-                    <span class="value">{int(row['累積銷售量'])}</span>
+                <div class="data-node">
+                    <span class="node-icon">📦</span>
+                    <span class="node-label">{alert_icon}可出貨</span>
+                    <span class="node-value ready-val">{ready}</span>
+                </div>
+                <div class="data-node">
+                    <span class="node-icon">🔥</span>
+                    <span class="node-label">已銷售</span>
+                    <span class="node-value sales-val">{sales}</span>
                 </div>
             </div>
         </div>
         """
         st.markdown(card_html, unsafe_allow_html=True)
-
-    # 關閉 container
     st.markdown('</div>', unsafe_allow_html=True)
-    
 else:
-    st.info("💡 目前暫無庫存資料，請先新增款式。")
+    st.info(f"💡 目前【{selected_category}】分類下暫無任何品項，請在下方新增。")
 
 st.divider()
 
 # ---------------------------------------------------------
-# 3. 現場進銷貨與新增品項操作介面 (維持原本穩定邏輯)
-st.subheader("🔄 庫存異動與品項管理")
+# 3. 現場進銷貨與轉化操作介面（自動連動種類）
+# ---------------------------------------------------------
+st.subheader("🔄 庫存異動與流程登記")
 
 action = st.radio(
     "步驟 1：請選擇動作", 
-    ["🛒 現場銷售（扣庫存）", "📦 每日進貨（加庫存）", "✨ 新增全新款式"], 
+    ["🛒 現場銷售（扣可出貨）", "🔧 完工包裝（半成品 ➔ 可出貨）", "🌿 追加資材（加半成品）", "✨ 新增全新款式"], 
     horizontal=True
 )
 
 if action == "✨ 新增全新款式":
-    new_item_name = st.text_input("步驟 2：請輸入新花束款式名稱", placeholder="例如：永恆愛戀 紫色系花束")
-    qty = st.number_input("步驟 3：輸入初始進貨庫存", min_value=0, value=10, step=1)
+    # 新增商品時，可以選擇加入現有種類，或手動輸入全新的大分類
+    cat_option = st.selectbox("步驟 2-1：將新商品歸類至...", existing_categories + ["+ 建立全新種類"])
+    if cat_option == "+ 建立全新種類":
+        target_category = st.text_input("請輸入全新種類名稱", placeholder="例如：過年小物").strip()
+    else:
+        target_category = cat_option
+        
+    new_item_name = st.text_input("步驟 2-2：請輸入新商品款式名稱", placeholder="例如：手寫特大紅包袋")
+    init_semi = st.number_input("步驟 3-1：輸入初始「半成品」庫存", min_value=0, value=0, step=1)
+    init_ready = st.number_input("步驟 3-2：輸入初始「可出貨」庫存", min_value=0, value=10, step=1)
 else:
-    if df.empty:
-        st.warning("⚠️ 目前沒有任何款式可以選擇，請先選擇『新增全新款式』。")
+    if filtered_df.empty:
+        st.warning(f"⚠️ 目前【{selected_category}】沒有任何品項可供操作，請先選擇『新增全新款式』。")
         st.stop()
-    selected_item = st.selectbox("步驟 2：選擇花束款式", df["花束款式"].tolist())
-    qty = st.number_input("步驟 3：輸入數量", min_value=1, value=1, step=1)
+    # 下拉選單只會帶出當前勾選種類下的商品，防止點錯
+    selected_item = st.selectbox(f"步驟 2：選擇【{selected_category}】品項", filtered_df["款式名稱"].tolist())
+    qty = st.number_input("步驟 3：輸入執行數量", min_value=1, value=1, step=1)
 
 st.write("")
 if st.button("🚀 確認送出更新", type="primary", use_container_width=True):
-    # 下方維持原本無誤的處理邏輯
     
+    # ─── 狀況 A：新增全新款式 ───
     if action == "✨ 新增全新款式":
+        if not target_category:
+            st.error("❌ 種類名稱不能為空！")
+            st.stop()
         cleaned_name = new_item_name.strip()
-        if not cleaned_name: st.error("❌ 請填寫新花束的款式名稱！")
-        elif cleaned_name in df["花束款式"].tolist(): st.error(f"❌ 款式【{cleaned_name}】已經存在於列表中。")
+        if not cleaned_name:
+            st.error("❌ 請填寫新款式名稱！")
+            st.stop()
+            
+        # 檢查在同一個分類下是否已有同名商品
+        if not df.empty and cleaned_name in df[df["種類"] == target_category]["款式名稱"].tolist():
+            st.error(f"❌ 在【{target_category}】分類中，款式【{cleaned_name}】已經存在。")
         else:
-            worksheet.append_row([cleaned_name, qty, 0])
-            st.success(f"🎉 成功新增全新款式：【{cleaned_name}】（初始庫存 {qty} 束）！")
+            # 寫入格式：[種類, 款式名稱, 半成品, 可出貨, 累積銷售]
+            worksheet.append_row([target_category, cleaned_name, init_semi, init_ready, 0])
+            st.success(f"🎉 成功新增商品：【{target_category}】 ➔ 【{cleaned_name}】！")
             st.rerun()
             
+    # ─── 狀況 B：庫存異動（利用「種類」+「款式名稱」進行精準定位） ───
     else:
-        p_idx = df[df["花束款式"] == selected_item].index[0]
-        g_row = p_idx + 2  
-        current_stock = int(df.loc[p_idx, "現有庫存"])
+        # 精準定位：同時符合當前選定種類與款式的列
+        match_condition = (df["種類"] == selected_category) & (df["款式名稱"] == selected_item)
+        p_idx = df[match_condition].index[0]
+        g_row = p_idx + 2  # 加上標頭與索引偏置
+        
+        current_semi = int(df.loc[p_idx, "半成品庫存"])
+        current_ready = int(df.loc[p_idx, "可出貨庫存"])
         current_sales = int(df.loc[p_idx, "累積銷售量"])
 
-        if "銷售" in action:
-            if current_stock < qty: st.error(f"❌ 【{selected_item}】庫存不足！無法販售 {qty} 束。")
+        if "現場銷售" in action:
+            if current_ready < qty:
+                st.error(f"❌ 庫存不足！可出貨僅剩 {current_ready}，無法銷售 {qty}。")
             else:
-                new_stock = current_stock - qty
-                new_sales = current_sales + qty
-                worksheet.update_cell(g_row, 2, new_stock)  # 更新B欄
-                worksheet.update_cell(g_row, 3, new_sales)  # 更新C欄
-                st.success(f"🎉 登記成功！【{selected_item}】售出 {qty} 束（累積銷售 {new_sales}）！")
+                worksheet.update_cell(g_row, 4, current_ready - qty)  # 更新第4欄 (D:可出貨庫存)
+                worksheet.update_cell(g_row, 5, current_sales + qty)  # 更新第5欄 (E:累積銷售量)
+                st.success(f"🎉 登記成功！【{selected_item}】成功售出 {qty}。")
                 st.rerun()
-        else:
-            new_stock = current_stock + qty
-            worksheet.update_cell(g_row, 2, new_stock)
-            st.success(f"🎉 登記成功！【{selected_item}】進貨 {qty} 束。")
+                
+        elif "完工包裝" in action:
+            if current_semi < qty:
+                st.error(f"❌ 轉化失敗！半成品僅剩 {current_semi}，不足以綁製 {qty}。")
+            else:
+                worksheet.update_cell(g_row, 3, current_semi - qty)   # 更新第3欄 (C:半成品庫存)
+                worksheet.update_cell(g_row, 4, current_ready + qty)  # 更新第4欄 (D:可出貨庫存)
+                st.success(f"🎉 轉化成功！已將 {qty} 件【{selected_item}】轉換為可出貨狀態！")
+                st.rerun()
+                
+        elif "追加資材" in action:
+            worksheet.update_cell(g_row, 3, current_semi + qty)       # 更新第3欄 (C:半成品庫存)
+            st.success(f"🎉 登記成功！【{selected_item}】已追加半成品庫存 {qty}。")
             st.rerun()
