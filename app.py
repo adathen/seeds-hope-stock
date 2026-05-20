@@ -25,15 +25,13 @@ except Exception as e:
     st.error(f"❌ 無法連線至 Google 試算表，請確認設定。錯誤回報: {e}")
     st.stop()
 
-# 讀取最新庫存資料 (🛠️ 新增強化防護：自動過濾殘留的空白網格)
+# 讀取最新庫存資料
 def load_data():
     try:
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         if not df.empty:
-            # 過濾掉款式名稱為空白的無效列，保留正確的原始索引以利後續更新
             df = df[df["款式名稱"].astype(str).str.strip() != ""]
-            # 強制轉換數值，避免試算表內的空白或文字造成當機
             for col in ["半成品庫存", "可出貨庫存", "累積銷售量"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
@@ -66,7 +64,6 @@ ST_CSS_STYLE = """
 """
 st.markdown(ST_CSS_STYLE, unsafe_allow_html=True)
 
-# 安全檢查
 required_cols = ["種類", "款式名稱", "半成品庫存", "可出貨庫存", "累積銷售量"]
 if not df.empty and not all(c in df.columns for c in required_cols):
     st.error("❌ Google 試算表欄位不正確！請確認第一行包含：種類、款式名稱、半成品庫存、可出貨庫存、累積銷售量")
@@ -122,11 +119,21 @@ st.divider()
 # ---------------------------------------------------------
 st.subheader("🔄 庫存異動與流程登記")
 
+# 調整後的六大黃金動作項目
 action = st.radio(
     "步驟 1：請選擇動作", 
-    ["🛒 現場銷售（扣可出貨）", "🔧 完工包裝（半成品 ➔ 可出貨）", "🌿 追加資材（加半成品）", "✨ 新增全新款式"], 
+    [
+        "🛒 現場銷售（扣可出貨）", 
+        "🔧 完工包裝（半成品 ➔ 可出貨）", 
+        "🌿 追加資材（加半成品）", 
+        "📤 其他扣除/出貨（不計入銷售）", 
+        "✏️ 銷售錯誤修正（減銷售 ➔ 還可出貨）", 
+        "✨ 新增全新款式"
+    ], 
     horizontal=True
 )
+
+deduct_target = None
 
 if action == "✨ 新增全新款式":
     st.info("💡 小提醒：建立「新種類」時，必須同時輸入該種類的「第一項商品名稱」才會成功建立喔！")
@@ -144,6 +151,10 @@ else:
         st.warning(f"⚠️ 目前【{selected_category}】沒有任何品項可供操作，請先選擇『新增全新款式』。")
         st.stop()
     selected_item = st.selectbox(f"步驟 2：選擇【{selected_category}】品項", filtered_df["款式名稱"].tolist())
+    
+    if "其他扣除" in action:
+        deduct_target = st.radio("步驟 2-1：您要扣除哪一種庫存？", ["📦 可出貨庫存", "🌿 半成品庫存"], horizontal=True)
+
     qty = st.number_input("步驟 3：輸入執行數量", min_value=1, value=1, step=1)
 
 st.write("")
@@ -198,3 +209,28 @@ if st.button("🚀 確認送出更新", type="primary", use_container_width=True
             worksheet.update_cell(g_row, 3, current_semi + qty)       
             st.success(f"🎉 登記成功！【{selected_item}】已追加半成品庫存 {qty}。")
             st.rerun()
+
+        elif "其他扣除" in action:
+            if "可出貨" in deduct_target:
+                if current_ready < qty: st.error(f"❌ 扣除失敗！可出貨庫存僅剩 {current_ready}。")
+                else:
+                    worksheet.update_cell(g_row, 4, current_ready - qty)
+                    st.success(f"🎉 成功扣除！已將 {qty} 件【{selected_item}】移出「可出貨」庫存。")
+                    st.rerun()
+            elif "半成品" in deduct_target:
+                if current_semi < qty: st.error(f"❌ 扣除失敗！半成品庫存僅剩 {current_semi}。")
+                else:
+                    worksheet.update_cell(g_row, 3, current_semi - qty)
+                    st.success(f"🎉 成功扣除！已將 {qty} 件【{selected_item}】移出「半成品」庫存。")
+                    st.rerun()
+
+        # ─── 💡 全新功能：銷售紀錄錯誤修正 ───
+        elif "銷售錯誤修正" in action:
+            if current_sales < qty:
+                st.error(f"❌ 修正失敗！【{selected_item}】目前的累積銷售量僅有 {current_sales} 束，無法扣除 {qty} 束。")
+            else:
+                # 扣除錯誤的銷售量（E欄 / 第5欄），並同步把實體花束還給可出貨庫存（D欄 / 第4欄）
+                worksheet.update_cell(g_row, 4, current_ready + qty)
+                worksheet.update_cell(g_row, 5, current_sales - qty)
+                st.success(f"🎉 修正成功！已扣除【{selected_item}】錯誤輸入的 {qty} 筆銷售紀錄，花束已安全退還至「可出貨庫存」！")
+                st.rerun()
