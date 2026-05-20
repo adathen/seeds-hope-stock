@@ -25,18 +25,26 @@ except Exception as e:
     st.error(f"❌ 無法連線至 Google 試算表，請確認設定。錯誤回報: {e}")
     st.stop()
 
-# 讀取最新庫存資料
+# 讀取最新庫存資料 (🛠️ 新增強化防護：自動過濾殘留的空白網格)
 def load_data():
     try:
         data = worksheet.get_all_records()
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        if not df.empty:
+            # 過濾掉款式名稱為空白的無效列，保留正確的原始索引以利後續更新
+            df = df[df["款式名稱"].astype(str).str.strip() != ""]
+            # 強制轉換數值，避免試算表內的空白或文字造成當機
+            for col in ["半成品庫存", "可出貨庫存", "累積銷售量"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        return df
     except Exception as e:
         st.error(f"❌ 讀取資料表結構錯誤，請確認欄位標題是否正確。錯誤回報: {e}")
         st.stop()
 
 df = load_data()
 
-# ─── 注入自定義 CSS 樣式（適應手機佈局與溫馨色調） ───
+# ─── 注入自定義 CSS 樣式 ───
 ST_CSS_STYLE = """
 <style>
 [data-testid="stMetricLabel"] { display: none; }
@@ -68,19 +76,18 @@ if not df.empty and not all(c in df.columns for c in required_cols):
 # 【核心功能】主動線：切換商品種類
 # ---------------------------------------------------------
 st.subheader("📁 請選擇商品大類")
-# 自動從試算表撈取所有不重複的種類，若為空則預設提供花束
-existing_categories = df["種類"].unique().tolist() if not df.empty else ["花束"]
-if not existing_categories:
+if not df.empty:
+    existing_categories = [c for c in df["種類"].unique() if str(c).strip()]
+    if not existing_categories:
+        existing_categories = ["花束"]
+else:
     existing_categories = ["花束"]
 
-# 讓太太在手機上一鍵勾選切換
 selected_category = st.radio("當前檢視種類：", existing_categories, horizontal=True)
-
-# 根據勾選的種類，篩選出對應的商品資料
 filtered_df = df[df["種類"] == selected_category] if not df.empty else pd.DataFrame()
 
 # ---------------------------------------------------------
-# 2. 即時看板展示（僅顯示篩選後的種類）
+# 2. 即時看板展示
 # ---------------------------------------------------------
 st.subheader(f"📊 【{selected_category}】當前庫存與熱銷狀態")
 if not filtered_df.empty:
@@ -97,21 +104,9 @@ if not filtered_df.empty:
         <div class="stock-card {low_stock_class}">
             <div class="card-header">{row['款式名稱']}</div>
             <div class="card-body-grid">
-                <div class="data-node">
-                    <span class="node-icon">🌿</span>
-                    <span class="node-label">半成品</span>
-                    <span class="node-value semi-val">{semi}</span>
-                </div>
-                <div class="data-node">
-                    <span class="node-icon">📦</span>
-                    <span class="node-label">{alert_icon}可出貨</span>
-                    <span class="node-value ready-val">{ready}</span>
-                </div>
-                <div class="data-node">
-                    <span class="node-icon">🔥</span>
-                    <span class="node-label">已銷售</span>
-                    <span class="node-value sales-val">{sales}</span>
-                </div>
+                <div class="data-node"><span class="node-icon">🌿</span><span class="node-label">半成品</span><span class="node-value semi-val">{semi}</span></div>
+                <div class="data-node"><span class="node-icon">📦</span><span class="node-label">{alert_icon}可出貨</span><span class="node-value ready-val">{ready}</span></div>
+                <div class="data-node"><span class="node-icon">🔥</span><span class="node-label">已銷售</span><span class="node-value sales-val">{sales}</span></div>
             </div>
         </div>
         """
@@ -123,7 +118,7 @@ else:
 st.divider()
 
 # ---------------------------------------------------------
-# 3. 現場進銷貨與轉化操作介面（自動連動種類）
+# 3. 現場進銷貨與轉化操作介面
 # ---------------------------------------------------------
 st.subheader("🔄 庫存異動與流程登記")
 
@@ -134,7 +129,7 @@ action = st.radio(
 )
 
 if action == "✨ 新增全新款式":
-    # 新增商品時，可以選擇加入現有種類，或手動輸入全新的大分類
+    st.info("💡 小提醒：建立「新種類」時，必須同時輸入該種類的「第一項商品名稱」才會成功建立喔！")
     cat_option = st.selectbox("步驟 2-1：將新商品歸類至...", existing_categories + ["+ 建立全新種類"])
     if cat_option == "+ 建立全新種類":
         target_category = st.text_input("請輸入全新種類名稱", placeholder="例如：過年小物").strip()
@@ -148,7 +143,6 @@ else:
     if filtered_df.empty:
         st.warning(f"⚠️ 目前【{selected_category}】沒有任何品項可供操作，請先選擇『新增全新款式』。")
         st.stop()
-    # 下拉選單只會帶出當前勾選種類下的商品，防止點錯
     selected_item = st.selectbox(f"步驟 2：選擇【{selected_category}】品項", filtered_df["款式名稱"].tolist())
     qty = st.number_input("步驟 3：輸入執行數量", min_value=1, value=1, step=1)
 
@@ -162,24 +156,21 @@ if st.button("🚀 確認送出更新", type="primary", use_container_width=True
             st.stop()
         cleaned_name = new_item_name.strip()
         if not cleaned_name:
-            st.error("❌ 請填寫新款式名稱！")
+            st.error("❌ 請務必填寫「商品款式名稱」！")
             st.stop()
             
-        # 檢查在同一個分類下是否已有同名商品
         if not df.empty and cleaned_name in df[df["種類"] == target_category]["款式名稱"].tolist():
             st.error(f"❌ 在【{target_category}】分類中，款式【{cleaned_name}】已經存在。")
         else:
-            # 寫入格式：[種類, 款式名稱, 半成品, 可出貨, 累積銷售]
             worksheet.append_row([target_category, cleaned_name, init_semi, init_ready, 0])
             st.success(f"🎉 成功新增商品：【{target_category}】 ➔ 【{cleaned_name}】！")
             st.rerun()
             
-    # ─── 狀況 B：庫存異動（利用「種類」+「款式名稱」進行精準定位） ───
+    # ─── 狀況 B：庫存異動 ───
     else:
-        # 精準定位：同時符合當前選定種類與款式的列
         match_condition = (df["種類"] == selected_category) & (df["款式名稱"] == selected_item)
         p_idx = df[match_condition].index[0]
-        g_row = p_idx + 2  # 加上標頭與索引偏置
+        g_row = p_idx + 2  
         
         current_semi = int(df.loc[p_idx, "半成品庫存"])
         current_ready = int(df.loc[p_idx, "可出貨庫存"])
@@ -189,8 +180,8 @@ if st.button("🚀 確認送出更新", type="primary", use_container_width=True
             if current_ready < qty:
                 st.error(f"❌ 庫存不足！可出貨僅剩 {current_ready}，無法銷售 {qty}。")
             else:
-                worksheet.update_cell(g_row, 4, current_ready - qty)  # 更新第4欄 (D:可出貨庫存)
-                worksheet.update_cell(g_row, 5, current_sales + qty)  # 更新第5欄 (E:累積銷售量)
+                worksheet.update_cell(g_row, 4, current_ready - qty)  
+                worksheet.update_cell(g_row, 5, current_sales + qty)  
                 st.success(f"🎉 登記成功！【{selected_item}】成功售出 {qty}。")
                 st.rerun()
                 
@@ -198,12 +189,12 @@ if st.button("🚀 確認送出更新", type="primary", use_container_width=True
             if current_semi < qty:
                 st.error(f"❌ 轉化失敗！半成品僅剩 {current_semi}，不足以綁製 {qty}。")
             else:
-                worksheet.update_cell(g_row, 3, current_semi - qty)   # 更新第3欄 (C:半成品庫存)
-                worksheet.update_cell(g_row, 4, current_ready + qty)  # 更新第4欄 (D:可出貨庫存)
+                worksheet.update_cell(g_row, 3, current_semi - qty)   
+                worksheet.update_cell(g_row, 4, current_ready + qty)  
                 st.success(f"🎉 轉化成功！已將 {qty} 件【{selected_item}】轉換為可出貨狀態！")
                 st.rerun()
                 
         elif "追加資材" in action:
-            worksheet.update_cell(g_row, 3, current_semi + qty)       # 更新第3欄 (C:半成品庫存)
+            worksheet.update_cell(g_row, 3, current_semi + qty)       
             st.success(f"🎉 登記成功！【{selected_item}】已追加半成品庫存 {qty}。")
             st.rerun()
