@@ -5,6 +5,35 @@ from google.oauth2.service_account import Credentials
 
 # 網頁基礎設定
 st.set_page_config(page_title="Seeds Hope 多品類庫存管理", page_icon="💐", layout="centered")
+
+# ─── 🔐 全新功能：安全登入機制 ───
+def check_password():
+    # 檢查是否已經登入過
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    # 如果還沒登入，顯示密碼輸入框
+    if not st.session_state["password_correct"]:
+        st.title("🔒 Seeds Hope 系統登入")
+        st.info("💡 請輸入專屬密碼以操作庫存系統")
+        
+        pwd = st.text_input("專屬密碼", type="password", placeholder="請輸入密碼...")
+        
+        if st.button("解鎖系統", type="primary", use_container_width=True):
+            # 比對 secrets.toml 裡面設定的密碼
+            if pwd == st.secrets.get("app_password", ""):
+                st.session_state["password_correct"] = True
+                st.rerun() # 密碼正確，重新整理網頁載入下方系統
+            else:
+                st.error("❌ 密碼錯誤，請重新輸入！")
+        
+        # 讓程式停在這裡，不往下顯示庫存系統
+        st.stop()
+
+# 執行密碼檢查
+# check_password()
+
+# ─── 🔓 密碼正確後，才會執行以下原本的庫存系統 ───
 st.title("💐 Seeds Hope 多品類庫存即時管理系統")
 
 # 1. 初始化 Google Sheets 連線
@@ -31,6 +60,7 @@ def load_data():
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         if not df.empty:
+            # 確保不會讀到空白的幽靈行
             df = df[df["款式名稱"].astype(str).str.strip() != ""]
             for col in ["半成品庫存", "可出貨庫存", "累積銷售量"]:
                 if col in df.columns:
@@ -117,9 +147,8 @@ st.divider()
 # ---------------------------------------------------------
 # 3. 現場進銷貨與轉化操作介面
 # ---------------------------------------------------------
-st.subheader("🔄 庫存異動與流程登記")
+st.subheader("🔄 庫存異動與管理維護")
 
-# 調整後的六大黃金動作項目
 action = st.radio(
     "步驟 1：請選擇動作", 
     [
@@ -128,12 +157,16 @@ action = st.radio(
         "🌿 追加資材（加半成品）", 
         "📤 其他扣除/出貨（不計入銷售）", 
         "✏️ 銷售錯誤修正（減銷售 ➔ 還可出貨）", 
-        "✨ 新增全新款式"
+        "✨ 新增全新款式",
+        "🖊️ 修改項目名稱", 
+        "🗑️ 刪除舊款式（謹慎使用）" 
     ], 
     horizontal=True
 )
 
 deduct_target = None
+new_name_input = None
+confirm_delete = False
 
 if action == "✨ 新增全新款式":
     st.info("💡 小提醒：建立「新種類」時，必須同時輸入該種類的「第一項商品名稱」才會成功建立喔！")
@@ -150,15 +183,27 @@ else:
     if filtered_df.empty:
         st.warning(f"⚠️ 目前【{selected_category}】沒有任何品項可供操作，請先選擇『新增全新款式』。")
         st.stop()
-    selected_item = st.selectbox(f"步驟 2：選擇【{selected_category}】品項", filtered_df["款式名稱"].tolist())
+    selected_item = st.selectbox(f"步驟 2:: 選擇【{selected_category}】品項", filtered_df["款式名稱"].tolist())
     
     if "其他扣除" in action:
         deduct_target = st.radio("步驟 2-1：您要扣除哪一種庫存？", ["📦 可出貨庫存", "🌿 半成品庫存"], horizontal=True)
+    
+    elif "修改項目名稱" in action:
+        new_name_input = st.text_input("步驟 3：請輸入「新」的款式名稱", placeholder="例如：改名後的新款式")
+        
+    elif "刪除舊款式" in action:
+        st.warning(f"⚠️ 警告：您即將永久刪除【{selected_category}】中的【{selected_item}】！此操作無法復原。")
+        confirm_delete = st.checkbox("我確認要永久刪除此項目", value=False)
 
-    qty = st.number_input("步驟 3：輸入執行數量", min_value=1, value=1, step=1)
+    if action not in ["✨ 新增全新款式", "🖊️ 修改項目名稱", "🗑️ 刪除舊款式（謹慎使用）"]:
+        qty = st.number_input("步驟 3：輸入執行數量", min_value=1, value=1, step=1)
 
 st.write("")
-if st.button("🚀 確認送出更新", type="primary", use_container_width=True):
+
+# 動態改變按鈕文字，避免報錯
+button_text = "🚨 確認永久刪除" if "刪除" in action else "🚀 確認送出更新"
+
+if st.button(button_text, type="primary", use_container_width=True):
     
     # ─── 狀況 A：新增全新款式 ───
     if action == "✨ 新增全新款式":
@@ -173,64 +218,82 @@ if st.button("🚀 確認送出更新", type="primary", use_container_width=True
         if not df.empty and cleaned_name in df[df["種類"] == target_category]["款式名稱"].tolist():
             st.error(f"❌ 在【{target_category}】分類中，款式【{cleaned_name}】已經存在。")
         else:
-            worksheet.append_row([target_category, cleaned_name, init_semi, init_ready, 0])
+            # 確保寫入試算表的庫存數是標準 Python int
+            worksheet.append_row([target_category, cleaned_name, int(init_semi), int(init_ready), 0])
             st.success(f"🎉 成功新增商品：【{target_category}】 ➔ 【{cleaned_name}】！")
             st.rerun()
             
-    # ─── 狀況 B：庫存異動 ───
+    # ─── 狀況 B：庫存異動與管理 ───
     else:
         match_condition = (df["種類"] == selected_category) & (df["款式名稱"] == selected_item)
         p_idx = df[match_condition].index[0]
-        g_row = p_idx + 2  
+        
+        # 💡 核心安全修正：將 g_row 轉換為標準 Python 內建整數
+        g_row = int(p_idx) + 2  
         
         current_semi = int(df.loc[p_idx, "半成品庫存"])
         current_ready = int(df.loc[p_idx, "可出貨庫存"])
         current_sales = int(df.loc[p_idx, "累積銷售量"])
 
-        if "現場銷售" in action:
-            if current_ready < qty:
-                st.error(f"❌ 庫存不足！可出貨僅剩 {current_ready}，無法銷售 {qty}。")
+        # ─── 管理功能 ───
+        if "修改項目名稱" in action:
+            cleaned_new_name = new_name_input.strip()
+            if not cleaned_new_name: st.error("❌ 新名稱不能為空！")
+            elif cleaned_new_name == selected_item: st.info("💡 新名稱與舊名稱相同，無需修改。")
+            elif cleaned_new_name in df[df["種類"] == selected_category]["款式名稱"].tolist():
+                st.error(f"❌ 分類【{selected_category}】中已存在名為【{cleaned_new_name}】的項目。")
             else:
-                worksheet.update_cell(g_row, 4, current_ready - qty)  
-                worksheet.update_cell(g_row, 5, current_sales + qty)  
+                worksheet.update_cell(g_row, 2, cleaned_new_name)
+                st.success(f"🎉 成功！項目已更名為【{cleaned_new_name}】。")
+                st.rerun()
+
+        elif "刪除舊款式" in action:
+            if not confirm_delete: st.warning("⚠️ 請先勾選『我確認要永久刪除此項目』後方可送出。")
+            else:
+                worksheet.delete_rows(g_row) # 這裡傳入標準 Python int，不再報錯
+                st.success(f"💥 項目【{selected_item}】及其所有紀錄已永久刪除。")
+                st.rerun()
+
+        # ─── 原有的庫存異動邏輯（數值更新全部包裝 int() 確保安全） ───
+        elif "現場銷售" in action:
+            if current_ready < qty: st.error(f"❌ 庫存不足！可出貨僅剩 {current_ready}。")
+            else:
+                worksheet.update_cell(g_row, 4, int(current_ready - qty))  
+                worksheet.update_cell(g_row, 5, int(current_sales + qty))  
                 st.success(f"🎉 登記成功！【{selected_item}】成功售出 {qty}。")
                 st.rerun()
                 
         elif "完工包裝" in action:
-            if current_semi < qty:
-                st.error(f"❌ 轉化失敗！半成品僅剩 {current_semi}，不足以綁製 {qty}。")
+            if current_semi < qty: st.error(f"❌ 轉化失敗！半成品僅剩 {current_semi}。")
             else:
-                worksheet.update_cell(g_row, 3, current_semi - qty)   
-                worksheet.update_cell(g_row, 4, current_ready + qty)  
-                st.success(f"🎉 轉化成功！已將 {qty} 件【{selected_item}】轉換為可出貨狀態！")
+                worksheet.update_cell(g_row, 3, int(current_semi - qty))   
+                worksheet.update_cell(g_row, 4, int(current_ready + qty))  
+                st.success(f"🎉 轉化成功！已轉換 {qty} 件為可出貨狀態！")
                 st.rerun()
                 
         elif "追加資材" in action:
-            worksheet.update_cell(g_row, 3, current_semi + qty)       
-            st.success(f"🎉 登記成功！【{selected_item}】已追加半成品庫存 {qty}。")
+            worksheet.update_cell(g_row, 3, int(current_semi + qty))       
+            st.success(f"🎉 登記成功！【{selected_item}】追加材料 {qty}。")
             st.rerun()
 
         elif "其他扣除" in action:
             if "可出貨" in deduct_target:
                 if current_ready < qty: st.error(f"❌ 扣除失敗！可出貨庫存僅剩 {current_ready}。")
                 else:
-                    worksheet.update_cell(g_row, 4, current_ready - qty)
-                    st.success(f"🎉 成功扣除！已將 {qty} 件【{selected_item}】移出「可出貨」庫存。")
+                    worksheet.update_cell(g_row, 4, int(current_ready - qty))
+                    st.success(f"🎉 成功扣除！已將 {qty} 件移出成品庫存。")
                     st.rerun()
             elif "半成品" in deduct_target:
                 if current_semi < qty: st.error(f"❌ 扣除失敗！半成品庫存僅剩 {current_semi}。")
                 else:
-                    worksheet.update_cell(g_row, 3, current_semi - qty)
-                    st.success(f"🎉 成功扣除！已將 {qty} 件【{selected_item}】移出「半成品」庫存。")
+                    worksheet.update_cell(g_row, 3, int(current_semi - qty))
+                    st.success(f"🎉 成功扣除！已將 {qty} 件移出材料庫存。")
                     st.rerun()
 
-        # ─── 💡 全新功能：銷售紀錄錯誤修正 ───
         elif "銷售錯誤修正" in action:
-            if current_sales < qty:
-                st.error(f"❌ 修正失敗！【{selected_item}】目前的累積銷售量僅有 {current_sales} 束，無法扣除 {qty} 束。")
+            if current_sales < qty: st.error(f"❌ 修正失敗！目前銷售量僅有 {current_sales}。")
             else:
-                # 扣除錯誤的銷售量（E欄 / 第5欄），並同步把實體花束還給可出貨庫存（D欄 / 第4欄）
-                worksheet.update_cell(g_row, 4, current_ready + qty)
-                worksheet.update_cell(g_row, 5, current_sales - qty)
-                st.success(f"🎉 修正成功！已扣除【{selected_item}】錯誤輸入的 {qty} 筆銷售紀錄，花束已安全退還至「可出貨庫存」！")
+                worksheet.update_cell(g_row, 4, int(current_ready + qty))
+                worksheet.update_cell(g_row, 5, int(current_sales - qty))
+                st.success(f"🎉 修正成功！錯誤的銷售紀錄已扣除，商品已退還庫存。")
                 st.rerun()
