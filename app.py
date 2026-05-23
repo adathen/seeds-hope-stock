@@ -197,6 +197,15 @@ else:
 
     if action not in ["✨ 新增全新款式", "🖊️ 修改項目名稱", "🗑️ 刪除舊款式（謹慎使用）"]:
         qty = st.number_input("步驟 3：輸入執行數量", min_value=1, value=1, step=1)
+        # 💡 新增：自動偵測半成品數量，若不足則跳出提示與確認勾選框
+        force_convert = False
+        if "完工包裝" in action and not filtered_df.empty:
+            match_condition = (filtered_df["款式名稱"] == selected_item)
+            if not filtered_df[match_condition].empty:
+                current_semi_display = int(filtered_df[match_condition]["半成品庫存"].values[0])
+                if current_semi_display < qty:
+                    st.warning(f"⚠️ 提示：目前半成品僅剩 {current_semi_display}。")
+                    force_convert = st.checkbox("☑️ 半成品為0，故非經由半成品完成（確認後直接新增成品）", value=False)
 
 st.write("")
 
@@ -264,8 +273,17 @@ if st.button(button_text, type="primary", use_container_width=True):
                 st.rerun()
                 
         elif "完工包裝" in action:
-            if current_semi < qty: st.error(f"❌ 轉化失敗！半成品僅剩 {current_semi}。")
+            if current_semi < qty:
+                # 判斷是否有勾選強制新增
+                if force_convert:
+                    # 只增加可出貨成品，不去扣半成品
+                    worksheet.update_cell(g_row, 4, int(current_ready + qty))
+                    st.success(f"🎉 成功！半成品為0，故非經由半成品完成，已直接新增 {qty} 件成品。")
+                    st.rerun()
+                else:
+                    st.error(f"❌ 轉化失敗！半成品僅剩 {current_semi}。若要強制新增，請勾選上方的確認框。")
             else:
+                # 正常轉換：扣除半成品、增加成品
                 worksheet.update_cell(g_row, 3, int(current_semi - qty))   
                 worksheet.update_cell(g_row, 4, int(current_ready + qty))  
                 st.success(f"🎉 轉化成功！已轉換 {qty} 件為可出貨狀態！")
