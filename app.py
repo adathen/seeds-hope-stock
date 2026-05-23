@@ -31,7 +31,7 @@ def check_password():
         st.stop()
 
 # 執行密碼檢查
-check_password()
+#check_password()
 
 # ─── 🔓 密碼正確後，才會執行以下原本的庫存系統 ───
 st.title("💐 Seeds Hope 多品類庫存即時管理系統")
